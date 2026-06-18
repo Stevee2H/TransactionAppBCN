@@ -11,8 +11,7 @@ from db import (
 st.set_page_config(page_title="Camp Inventory", page_icon="📦", layout="wide")
 st.markdown("""
 <style>
-    .block-container { padding-top: 4rem; }
-    .stApp > .main > div { padding-top: 0 !important; }
+    .block-container { padding-top: 1.5rem; }
     .alert-red   { background:#ffe0e0; border-left:4px solid #e53935;
                    padding:.6rem 1rem; border-radius:6px; margin:.4rem 0; }
     .alert-green { background:#e0f7e9; border-left:4px solid #43a047;
@@ -173,11 +172,15 @@ if is_admin:
 
         lantai_all, sesi_all, items_all = load_form_data()
 
+        # Saldo gudang per item (untuk validasi)
+        saldo_map = {r["id"]: r["saldo_gudang"] for r in get_saldo_per_item()}
+
+        # Hari di luar form supaya sesi bisa filter secara dinamis
+        hari = st.selectbox("Hari", [1,2,3], format_func=lambda x: f"Day {x}", key="trx_hari")
+        sesi_filtered = [r for r in sesi_all if r["hari"] == hari]
+
         with st.form("form_transaksi", clear_on_submit=True):
-            c1, c2 = st.columns(2)
-            hari    = c1.selectbox("Hari", [1,2,3], format_func=lambda x: f"Day {x}")
-            sesi_filtered = [r for r in sesi_all if r["hari"] == hari]
-            id_sesi = c2.selectbox(
+            id_sesi = st.selectbox(
                 "Sesi",
                 options=[r["id"] for r in sesi_filtered],
                 format_func=lambda x: next(f"{r['jam']} — {r['nama']}" for r in sesi_filtered if r["id"] == x)
@@ -193,15 +196,22 @@ if is_admin:
                 options=[r["id"] for r in items_all],
                 format_func=lambda x: next(r["nama"] for r in items_all if r["id"] == x)
             )
+
+            saldo_item = saldo_map.get(id_item, 0)
+            st.info(f"📦 Sisa stok di gudang untuk barang ini: **{saldo_item} unit**")
+
             c5, c6  = st.columns(2)
             jumlah  = c5.number_input("Jumlah (+ keluar, - kembali)", step=1, value=1)
             catatan = c6.text_input("Catatan (opsional)")
 
             if st.form_submit_button("✅ Simpan Transaksi", use_container_width=True):
-                add_transaksi(hari, id_sesi, id_lantai, id_item, jumlah, catatan)
-                st.cache_data.clear()
-                st.success(f"{'Keluar' if jumlah > 0 else 'Kembali'}: {abs(jumlah)} unit disimpan!")
-                st.rerun()
+                if jumlah > 0 and jumlah > saldo_item:
+                    st.error(f"❌ Stok tidak cukup! Sisa di gudang hanya {saldo_item} unit, kamu mencoba mengeluarkan {jumlah} unit.")
+                else:
+                    add_transaksi(hari, id_sesi, id_lantai, id_item, jumlah, catatan)
+                    st.cache_data.clear()
+                    st.success(f"{'Keluar' if jumlah > 0 else 'Kembali'}: {abs(jumlah)} unit disimpan!")
+                    st.rerun()
 
 # ─────────────────────────────────────────────
 # TAB 3 — DISTRIBUSI AWAL (admin only)
