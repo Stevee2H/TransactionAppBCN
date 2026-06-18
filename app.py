@@ -11,7 +11,7 @@ from db import (
 st.set_page_config(page_title="Camp Inventory", page_icon="📦", layout="wide")
 st.markdown("""
 <style>
-    .block-container { padding-top: 4rem; }
+    .block-container { padding-top: 1.5rem; }
     .alert-red   { background:#ffe0e0; border-left:4px solid #e53935;
                    padding:.6rem 1rem; border-radius:6px; margin:.4rem 0; }
     .alert-green { background:#e0f7e9; border-left:4px solid #43a047;
@@ -175,10 +175,11 @@ if is_admin:
         with st.form("form_transaksi", clear_on_submit=True):
             c1, c2 = st.columns(2)
             hari    = c1.selectbox("Hari", [1,2,3], format_func=lambda x: f"Day {x}")
+            sesi_filtered = [r for r in sesi_all if r["hari"] == hari]
             id_sesi = c2.selectbox(
                 "Sesi",
-                options=[r["id"] for r in sesi_all],
-                format_func=lambda x: next(f"{r['jam']} — {r['nama']}" for r in sesi_all if r["id"] == x)
+                options=[r["id"] for r in sesi_filtered],
+                format_func=lambda x: next(f"{r['jam']} — {r['nama']}" for r in sesi_filtered if r["id"] == x)
             )
             c3, c4 = st.columns(2)
             id_lantai = c3.selectbox(

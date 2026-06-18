@@ -25,9 +25,11 @@ def get_lantai():
     return res.data
 
 # ── Sesi ──────────────────────────────────────
-def get_sesi():
-    res = get_client().table("sesi").select("*").order("id").execute()
-    return res.data
+def get_sesi(hari=None):
+    q = get_client().table("sesi").select("*").order("jam")
+    if hari:
+        q = q.eq("hari", hari)
+    return q.execute().data
 
 # ── Distribusi ────────────────────────────────
 def upsert_distribusi(id_lantai, id_item, jumlah):
