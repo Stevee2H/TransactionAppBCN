@@ -11,7 +11,9 @@ from db import (
 st.set_page_config(page_title="Camp Inventory", page_icon="📦", layout="wide")
 st.markdown("""
 <style>
-    .block-container { padding-top: 1.5rem; }
+    .block-container { padding-top: 4rem; }
+    .stApp .main .block-container { padding-top: 4rem !important; }
+    .stAlert, .stCheckbox, .stButton, .stSelectbox, .stTextInput { margin-top: 0.5rem; }
     .alert-red   { background:#ffe0e0; border-left:4px solid #e53935;
                    padding:.6rem 1rem; border-radius:6px; margin:.4rem 0; }
     .alert-green { background:#e0f7e9; border-left:4px solid #43a047;
