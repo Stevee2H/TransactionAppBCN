@@ -1,163 +1,124 @@
-import psycopg2
-import psycopg2.extras
+from supabase import create_client
 import streamlit as st
 
-def get_conn():
-    return psycopg2.connect(
+@st.cache_resource
+def get_client():
+    return create_client(
         st.secrets["SUPABASE_URL"],
-        cursor_factory=psycopg2.extras.RealDictCursor
+        st.secrets["SUPABASE_KEY"]
     )
 
-def init_db():
-    schema = open("schema.sql").read()
-    with get_conn() as conn:
-        with conn.cursor() as cur:
-            cur.execute(schema)
-        conn.commit()
-
 # ── Item ──────────────────────────────────────
-def get_items(conn):
-    with conn.cursor() as cur:
-        cur.execute("SELECT * FROM item ORDER BY id")
-        return cur.fetchall()
+def get_items():
+    res = get_client().table("item").select("*").order("id").execute()
+    return res.data
 
-def update_stok(conn, id_item, stok):
-    with conn.cursor() as cur:
-        cur.execute("UPDATE item SET stok=%s WHERE id=%s", (stok, id_item))
-    conn.commit()
+def update_stok(id_item, stok):
+    get_client().table("item").update({"stok": stok}).eq("id", id_item).execute()
 
-def update_tipe(conn, id_item, tipe):
-    with conn.cursor() as cur:
-        cur.execute("UPDATE item SET tipe=%s WHERE id=%s", (tipe, id_item))
-    conn.commit()
+def update_tipe(id_item, tipe):
+    get_client().table("item").update({"tipe": tipe}).eq("id", id_item).execute()
 
 # ── Lantai ────────────────────────────────────
-def get_lantai(conn):
-    with conn.cursor() as cur:
-        cur.execute("SELECT * FROM lantai ORDER BY id")
-        return cur.fetchall()
+def get_lantai():
+    res = get_client().table("lantai").select("*").order("id").execute()
+    return res.data
 
 # ── Sesi ──────────────────────────────────────
-def get_sesi(conn):
-    with conn.cursor() as cur:
-        cur.execute("SELECT * FROM sesi ORDER BY id")
-        return cur.fetchall()
+def get_sesi():
+    res = get_client().table("sesi").select("*").order("id").execute()
+    return res.data
 
 # ── Distribusi ────────────────────────────────
-def upsert_distribusi(conn, id_lantai, id_item, jumlah):
-    with conn.cursor() as cur:
-        cur.execute("""
-            INSERT INTO distribusi (id_lantai, id_item, jumlah)
-            VALUES (%s, %s, %s)
-            ON CONFLICT (id_lantai, id_item) DO UPDATE SET jumlah = EXCLUDED.jumlah
-        """, (id_lantai, id_item, jumlah))
-    conn.commit()
+def upsert_distribusi(id_lantai, id_item, jumlah):
+    get_client().table("distribusi").upsert({
+        "id_lantai": id_lantai,
+        "id_item": id_item,
+        "jumlah": jumlah
+    }, on_conflict="id_lantai,id_item").execute()
 
-def get_distribusi(conn):
-    with conn.cursor() as cur:
-        cur.execute("""
-            SELECT d.*, l.nama as nama_lantai, i.nama as nama_item
-            FROM distribusi d
-            JOIN lantai l ON d.id_lantai = l.id
-            JOIN item   i ON d.id_item   = i.id
-            ORDER BY d.id_lantai, d.id_item
-        """)
-        return cur.fetchall()
+def get_distribusi():
+    res = get_client().table("distribusi")\
+        .select("*, lantai(nama), item(nama)")\
+        .order("id_lantai").execute()
+    return res.data
 
 # ── Transaksi ─────────────────────────────────
-def add_transaksi(conn, hari, id_sesi, id_lantai, id_item, jumlah, catatan=""):
-    with conn.cursor() as cur:
-        cur.execute("""
-            INSERT INTO transaksi (hari, id_sesi, id_lantai, id_item, jumlah, catatan)
-            VALUES (%s, %s, %s, %s, %s, %s)
-        """, (hari, id_sesi, id_lantai, id_item, jumlah, catatan))
-    conn.commit()
+def add_transaksi(hari, id_sesi, id_lantai, id_item, jumlah, catatan=""):
+    get_client().table("transaksi").insert({
+        "hari": hari,
+        "id_sesi": id_sesi,
+        "id_lantai": id_lantai,
+        "id_item": id_item,
+        "jumlah": jumlah,
+        "catatan": catatan
+    }).execute()
 
-def delete_transaksi(conn, trx_id):
-    with conn.cursor() as cur:
-        cur.execute("DELETE FROM transaksi WHERE id=%s", (trx_id,))
-    conn.commit()
+def delete_transaksi(trx_id):
+    get_client().table("transaksi").delete().eq("id", trx_id).execute()
 
-def get_transaksi(conn, hari=None, id_lantai=None):
-    q = """
-        SELECT t.*, s.jam, s.nama as nama_sesi,
-               l.nama as nama_lantai, i.nama as nama_item
-        FROM transaksi t
-        JOIN sesi   s ON t.id_sesi   = s.id
-        JOIN lantai l ON t.id_lantai = l.id
-        JOIN item   i ON t.id_item   = i.id
-        WHERE 1=1
-    """
-    params = []
+def get_transaksi(hari=None, id_lantai=None):
+    q = get_client().table("transaksi")\
+        .select("*, sesi(jam, nama), lantai(nama), item(nama)")\
+        .order("hari").order("id")
     if hari:
-        q += " AND t.hari=%s"; params.append(hari)
+        q = q.eq("hari", hari)
     if id_lantai:
-        q += " AND t.id_lantai=%s"; params.append(id_lantai)
-    q += " ORDER BY t.hari, s.jam, t.created_at"
-    with conn.cursor() as cur:
-        cur.execute(q, params)
-        return cur.fetchall()
+        q = q.eq("id_lantai", id_lantai)
+    return q.execute().data
 
-def get_saldo_per_item(conn):
-    with conn.cursor() as cur:
-        cur.execute("""
-            SELECT
-                i.id, i.nama, i.stok, i.tipe,
-                COALESCE(d.total_dist, 0)  AS total_distribusi,
-                COALESCE(tx.net, 0)        AS net_transaksi,
-                i.stok
-                    - COALESCE(d.total_dist, 0)
-                    - COALESCE(tx.net, 0)  AS saldo_gudang,
-                COALESCE(d.total_dist, 0)
-                    + COALESCE(tx.net, 0)  AS total_keluar
-            FROM item i
-            LEFT JOIN (
-                SELECT id_item, SUM(jumlah) AS total_dist
-                FROM distribusi GROUP BY id_item
-            ) d ON i.id = d.id_item
-            LEFT JOIN (
-                SELECT id_item, SUM(jumlah) AS net
-                FROM transaksi GROUP BY id_item
-            ) tx ON i.id = tx.id_item
-            ORDER BY i.id
-        """)
-        return cur.fetchall()
+def get_saldo_per_item():
+    items    = get_items()
+    dist_res = get_client().table("distribusi").select("id_item, jumlah").execute().data
+    trx_res  = get_client().table("transaksi").select("id_item, jumlah").execute().data
 
-def get_barang_belum_kembali(conn):
-    with conn.cursor() as cur:
-        cur.execute("""
-            SELECT
-                i.id, i.nama,
-                COALESCE(d.total_dist, 0) + COALESCE(tx.net, 0) AS total_di_luar
-            FROM item i
-            LEFT JOIN (
-                SELECT id_item, SUM(jumlah) AS total_dist
-                FROM distribusi GROUP BY id_item
-            ) d ON i.id = d.id_item
-            LEFT JOIN (
-                SELECT id_item, SUM(jumlah) AS net
-                FROM transaksi GROUP BY id_item
-            ) tx ON i.id = tx.id_item
-            WHERE i.tipe = 'returnable'
-              AND (COALESCE(d.total_dist, 0) + COALESCE(tx.net, 0)) > 0
-            ORDER BY total_di_luar DESC
-        """)
-        return cur.fetchall()
+    # Aggregate distribusi
+    dist_map = {}
+    for d in dist_res:
+        dist_map[d["id_item"]] = dist_map.get(d["id_item"], 0) + d["jumlah"]
 
-def get_rincian_per_lantai(conn, id_item):
-    with conn.cursor() as cur:
-        cur.execute("""
-            SELECT
-                l.nama AS nama_lantai,
-                COALESCE(d.jumlah, 0) + COALESCE(tx.net, 0) AS jumlah_di_lantai
-            FROM lantai l
-            LEFT JOIN distribusi d ON d.id_lantai = l.id AND d.id_item = %s
-            LEFT JOIN (
-                SELECT id_lantai, SUM(jumlah) AS net
-                FROM transaksi WHERE id_item = %s
-                GROUP BY id_lantai
-            ) tx ON tx.id_lantai = l.id
-            WHERE COALESCE(d.jumlah, 0) + COALESCE(tx.net, 0) > 0
-            ORDER BY l.id
-        """, (id_item, id_item))
-        return cur.fetchall()
+    # Aggregate transaksi
+    trx_map = {}
+    for t in trx_res:
+        trx_map[t["id_item"]] = trx_map.get(t["id_item"], 0) + t["jumlah"]
+
+    result = []
+    for item in items:
+        iid  = item["id"]
+        dist = dist_map.get(iid, 0)
+        net  = trx_map.get(iid, 0)
+        result.append({
+            "id":               iid,
+            "nama":             item["nama"],
+            "tipe":             item["tipe"],
+            "stok":             item["stok"],
+            "total_distribusi": dist,
+            "net_transaksi":    net,
+            "saldo_gudang":     item["stok"] - dist - net,
+            "total_keluar":     dist + net,
+        })
+    return result
+
+def get_barang_belum_kembali():
+    saldo = get_saldo_per_item()
+    return [r for r in saldo if r["tipe"] == "returnable" and r["total_keluar"] > 0]
+
+def get_rincian_per_lantai(id_item):
+    lantai   = get_lantai()
+    dist_res = get_client().table("distribusi").select("id_lantai, jumlah")\
+                   .eq("id_item", id_item).execute().data
+    trx_res  = get_client().table("transaksi").select("id_lantai, jumlah")\
+                   .eq("id_item", id_item).execute().data
+
+    dist_map = {d["id_lantai"]: d["jumlah"] for d in dist_res}
+    trx_map  = {}
+    for t in trx_res:
+        trx_map[t["id_lantai"]] = trx_map.get(t["id_lantai"], 0) + t["jumlah"]
+
+    result = []
+    for lt in lantai:
+        lid   = lt["id"]
+        total = dist_map.get(lid, 0) + trx_map.get(lid, 0)
+        if total > 0:
+            result.append({"nama_lantai": lt["nama"], "jumlah_di_lantai": total})
+    return result
